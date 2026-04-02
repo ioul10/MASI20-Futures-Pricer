@@ -135,13 +135,13 @@ def price_all_maturities(
         maturity_date = pd.Timestamp(pricing_date) + pd.Timedelta(days=days)
 
         rows.append({
-            "Maturité": label,
-            "T (années)": round(T, 4),
-            "r (%)": round(r * 100, 4),
-            "F₀ (points)": round(F0, 2),
-            "Notionnel (MAD)": round(notional, 2),
-            "Base (S₀ - F₀)": round(b, 2),
-            "Date Échéance (approx.)": maturity_date.strftime("%d/%m/%Y"),
+            "Maturite":          label,
+            "T (annees)":        round(T, 4),
+            "r (%)":             round(r * 100, 4),
+            "F0 (points)":       round(F0, 2),
+            "Notionnel (MAD)":   round(notional, 2),
+            "Base (S0-F0)":      round(b, 2),
+            "Date Echeance":     maturity_date.strftime("%d/%m/%Y"),
         })
 
     return pd.DataFrame(rows)
@@ -211,13 +211,13 @@ def price_quarterly_expirations(
         month_label = exp.strftime("%b %Y")
 
         rows.append({
-            "Échéance": month_label,
-            "Date Expiration": exp.strftime("%d/%m/%Y"),
-            "T (années)": round(T, 4),
-            "r (%)": round(r * 100, 4),
-            "F₀ (points)": round(F0, 2),
-            "Notionnel (MAD)": round(notional, 2),
-            "Base (S₀ - F₀)": round(b, 2),
+            "Echeance":          month_label,
+            "Date Expiration":   exp.strftime("%d/%m/%Y"),
+            "T (annees)":        round(T, 4),
+            "r (%)":             round(r * 100, 4),
+            "F0":                round(F0, 2),
+            "Notionnel":         round(notional, 2),
+            "Base":              round(b, 2),
         })
 
     return pd.DataFrame(rows)
