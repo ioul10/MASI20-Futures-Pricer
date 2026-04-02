@@ -1,9 +1,6 @@
 """
 app.py — MASI20 Futures Pricer
-Application Streamlit de pricing des contrats futures sur l'indice MASI20
-Basée sur le modèle d'absence d'arbitrage : F₀ = S₀ × exp((r − q) × T)
-
-CDG Capital — Marché à Terme
+F0 = S0 * exp((r - q) * T)
 """
 
 import streamlit as st
@@ -12,12 +9,10 @@ import numpy as np
 import math
 import datetime
 import plotly.graph_objects as go
-import plotly.express as px
-from io import BytesIO
+import requests
 
 from pricing import (
     load_zc_rates,
-    price_all_maturities,
     price_quarterly_expirations,
     price_future,
     notional_value,
@@ -27,7 +22,7 @@ from pricing import (
 )
 from scraper import get_masi20_spot
 
-# ── Configuration Streamlit ────────────────────────────────────────────────
+# ── Config ─────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="MASI20 Futures Pricer",
     page_icon="📈",
@@ -35,210 +30,160 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# ── CSS personnalisé ───────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* Header principal */
     .main-header {
         background: linear-gradient(135deg, #1B4F2D 0%, #2E7D4F 50%, #1B4F2D 100%);
-        padding: 2rem 2.5rem;
-        border-radius: 12px;
-        margin-bottom: 1.5rem;
-        color: white;
+        padding: 1.8rem 2.5rem; border-radius: 12px; margin-bottom: 1.5rem; color: white;
     }
-    .main-header h1 { margin: 0; font-size: 2rem; font-weight: 700; color: white; }
-    .main-header p  { margin: 0.3rem 0 0; opacity: 0.85; font-size: 1rem; }
-
-    /* Metric cards */
+    .main-header h1 { margin: 0; font-size: 1.9rem; font-weight: 700; color: white; }
+    .main-header p  { margin: 0.3rem 0 0; opacity: 0.85; font-size: 0.95rem; }
     .metric-card {
-        background: white;
-        border: 1px solid #e5e7eb;
-        border-radius: 10px;
-        padding: 1.1rem 1.3rem;
-        text-align: center;
+        background: white; border: 1px solid #e5e7eb; border-radius: 10px;
+        padding: 1.1rem 1rem; text-align: center;
         box-shadow: 0 1px 4px rgba(0,0,0,0.06);
     }
-    .metric-card .label { font-size: 0.78rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
-    .metric-card .value { font-size: 1.75rem; font-weight: 700; color: #1B4F2D; margin: 0.2rem 0; }
-    .metric-card .sub   { font-size: 0.8rem; color: #9ca3af; }
-
-    /* Section titles */
+    .metric-card .label { font-size: 0.75rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
+    .metric-card .value { font-size: 1.65rem; font-weight: 700; color: #1B4F2D; margin: 0.2rem 0; }
+    .metric-card .sub   { font-size: 0.78rem; color: #9ca3af; }
     .section-title {
-        font-size: 1.1rem; font-weight: 600; color: #1B4F2D;
-        border-left: 4px solid #2E7D4F; padding-left: 0.75rem;
-        margin: 1.5rem 0 0.8rem;
+        font-size: 1.05rem; font-weight: 600; color: #1B4F2D;
+        border-left: 4px solid #2E7D4F; padding-left: 0.75rem; margin: 1.4rem 0 0.8rem;
     }
-
-    /* Formula box */
     .formula-box {
-        background: #f0fdf4;
-        border: 1px solid #86efac;
-        border-radius: 8px;
-        padding: 1rem 1.5rem;
-        font-family: 'Courier New', monospace;
-        font-size: 1.05rem;
-        color: #166534;
-        margin: 0.8rem 0;
+        background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px;
+        padding: 1rem 1.5rem; font-family: 'Courier New', monospace;
+        font-size: 1.05rem; color: #166534; margin: 0.8rem 0;
     }
-
-    /* Warning / info banners */
     .info-banner {
-        background: #eff6ff; border: 1px solid #93c5fd;
-        border-radius: 8px; padding: 0.7rem 1rem;
-        font-size: 0.88rem; color: #1e40af;
-        margin: 0.5rem 0;
+        background: #eff6ff; border: 1px solid #93c5fd; border-radius: 8px;
+        padding: 0.65rem 1rem; font-size: 0.86rem; color: #1e40af; margin: 0.4rem 0;
     }
     .warn-banner {
-        background: #fffbeb; border: 1px solid #fcd34d;
-        border-radius: 8px; padding: 0.7rem 1rem;
-        font-size: 0.88rem; color: #92400e;
-        margin: 0.5rem 0;
+        background: #fffbeb; border: 1px solid #fcd34d; border-radius: 8px;
+        padding: 0.65rem 1rem; font-size: 0.86rem; color: #92400e; margin: 0.4rem 0;
     }
-
-    /* Table styling */
-    .dataframe { font-size: 0.88rem !important; }
-
-    /* Sidebar branding */
     .sidebar-brand {
-        background: #1B4F2D; color: white;
-        border-radius: 8px; padding: 0.8rem 1rem;
-        text-align: center; margin-bottom: 1rem;
-        font-weight: 600; font-size: 0.95rem;
+        background: #1B4F2D; color: white; border-radius: 8px; padding: 0.8rem 1rem;
+        text-align: center; margin-bottom: 1rem; font-weight: 600; font-size: 0.9rem;
     }
-
-    /* Footer */
+    .spot-badge {
+        background: #dcfce7; border: 1px solid #4ade80; border-radius: 8px;
+        padding: 0.5rem 0.8rem; font-size: 0.85rem; color: #166534;
+    }
     .footer {
-        text-align: center; color: #9ca3af;
-        font-size: 0.78rem; margin-top: 2rem;
-        padding-top: 1rem; border-top: 1px solid #e5e7eb;
+        text-align: center; color: #9ca3af; font-size: 0.76rem;
+        margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #e5e7eb;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# ── SIDEBAR ───────────────────────────────────────────────────────────────
+# SIDEBAR
 # ══════════════════════════════════════════════════════════════════════════
 with st.sidebar:
     st.markdown('<div class="sidebar-brand">📊 MASI20 Futures Pricer<br><small>CDG Capital — Marché à Terme</small></div>', unsafe_allow_html=True)
 
-    # ── 1. Fichier ZC Rates ──────────────────────────────────────────────
+    # 1. Fichier ZC
     st.markdown("### 📂 Courbe des Taux ZC")
     uploaded_zc = st.file_uploader(
-        "Importer le fichier Excel ZC_Rate",
+        "Importer ZC_Rate.xlsx",
         type=["xlsx", "xls"],
-        help="Format attendu : colonnes date_spot | date_maturity | zc (%)"
+        help="Colonnes attendues : date_spot | date_maturity | zc (%)"
     )
 
     zc_df = None
+    pricing_date = datetime.date.today()
+
     if uploaded_zc is not None:
         try:
             zc_df = load_zc_rates(uploaded_zc)
-            st.success(f"✅ {len(zc_df)} points de taux chargés")
+            # Date spot depuis l'Excel
+            pricing_date = zc_df["date_spot"].iloc[0].date()
+            st.success(f"✅ {len(zc_df)} points chargés")
+            st.markdown(f'<div class="spot-badge">📅 Date spot Excel : <b>{pricing_date.strftime("%d/%m/%Y")}</b></div>', unsafe_allow_html=True)
         except Exception as e:
-            st.error(f"❌ Erreur lecture Excel : {e}")
+            st.error(f"❌ Erreur : {e}")
 
-    # ── 2. Prix Spot MASI20 ──────────────────────────────────────────────
+    # 2. Prix Spot MASI20
     st.markdown("### 🔴 Niveau Spot MASI20")
-
-    col_live, col_manual = st.columns(2)
-    with col_live:
-        fetch_live = st.button("🔄 Live", use_container_width=True, help="Scraper le cours en temps réel")
-    with col_manual:
-        use_manual = st.checkbox("Manuel", value=True)
 
     if "spot_result" not in st.session_state:
         st.session_state.spot_result = None
 
-    if fetch_live:
-        with st.spinner("Récupération..."):
+    if st.button("🔄 Scraper cours live", use_container_width=True):
+        with st.spinner("Récupération en cours..."):
             result = get_masi20_spot()
             st.session_state.spot_result = result
 
-    if st.session_state.spot_result and st.session_state.spot_result["success"]:
-        auto_val = st.session_state.spot_result["value"]
-        src = st.session_state.spot_result["source"]
-        st.markdown(f'<div class="info-banner">📡 {src}<br><b>{auto_val:,.2f} pts</b></div>', unsafe_allow_html=True)
-        default_spot = auto_val
-    else:
-        default_spot = 15500.0  # valeur indicative MASI20 ~2025
+    default_spot = 15500.0
+    if st.session_state.spot_result:
+        if st.session_state.spot_result["success"]:
+            auto_val = st.session_state.spot_result["value"]
+            src  = st.session_state.spot_result.get("source", "")
+            warn = st.session_state.spot_result.get("warning", "")
+            st.markdown(f'<div class="info-banner">📡 <b>{src}</b><br>{auto_val:,.2f} pts</div>', unsafe_allow_html=True)
+            if warn:
+                st.markdown(f'<div class="warn-banner">⚠️ {warn}</div>', unsafe_allow_html=True)
+            default_spot = auto_val
+        else:
+            err = st.session_state.spot_result.get("error", "Erreur inconnue")
+            st.markdown(f'<div class="warn-banner">❌ {err}</div>', unsafe_allow_html=True)
 
     S0 = st.number_input(
-        "S₀ — Niveau de l'indice (points)",
-        min_value=100.0, max_value=100000.0,
+        "S0 — Niveau de l'indice (points)",
+        min_value=100.0, max_value=999999.0,
         value=default_spot, step=10.0, format="%.2f"
     )
 
-    # ── 3. Paramètre q ───────────────────────────────────────────────────
+    # 3. Taux de dividende q
     st.markdown("### 🍃 Taux de Dividende (q)")
-    q_mode = st.radio(
-        "Mode de saisie",
-        ["Valeur fixe", "Par maturité (avancé)"],
-        horizontal=True,
-    )
+    q_mode = st.radio("Mode", ["Valeur fixe", "Par maturite"], horizontal=True)
 
     if q_mode == "Valeur fixe":
-        q_pct = st.slider(
-            "q — Rendement dividende (%)",
-            min_value=0.0, max_value=10.0, value=3.5, step=0.1,
-            help="Taux de dividende annualisé moyen du MASI20 (~3–4% historiquement)"
-        )
+        q_pct = st.slider("q (%)", 0.0, 10.0, 3.5, 0.1,
+            help="Rendement dividende annualise ~3-4% pour le MASI20")
         q = q_pct / 100
-        st.markdown(f'<div class="info-banner">ℹ️ Au Maroc, les dividendes sont concentrés sur <b>mars–juin</b>. q varie selon la maturité du contrat.</div>', unsafe_allow_html=True)
+        q_map = {k: q for k in STANDARD_MATURITIES}
+        st.markdown('<div class="info-banner">ℹ️ Dividendes marocains concentres sur <b>mars-juin</b>. q varie selon la maturite.</div>', unsafe_allow_html=True)
     else:
-        st.markdown("*Saisir q pour chaque maturité standard :*")
-        q_3m  = st.number_input("q — 3 Mois (%)", value=2.5, step=0.1) / 100
-        q_6m  = st.number_input("q — 6 Mois (%)", value=3.5, step=0.1) / 100
-        q_9m  = st.number_input("q — 9 Mois (%)", value=4.0, step=0.1) / 100
-        q_1y  = st.number_input("q — 1 An (%)",    value=3.8, step=0.1) / 100
+        q_3m = st.number_input("q — 3 Mois (%)", value=2.5, step=0.1) / 100
+        q_6m = st.number_input("q — 6 Mois (%)", value=3.5, step=0.1) / 100
+        q_9m = st.number_input("q — 9 Mois (%)", value=4.0, step=0.1) / 100
+        q_1y = st.number_input("q — 1 An (%)",    value=3.8, step=0.1) / 100
         q_map = {"3 Mois": q_3m, "6 Mois": q_6m, "9 Mois": q_9m, "1 An": q_1y}
-        q = q_3m  # default pour les calculs uniques
+        q = q_3m
 
-    # ── 4. Date de pricing ───────────────────────────────────────────────
-    st.markdown("### 📅 Date de Pricing")
-    pricing_date = st.date_input("Date spot", value=datetime.date.today())
-
-    # ── 5. Paramètres du contrat ─────────────────────────────────────────
+    # 4. Contrat
     st.markdown("### ⚙️ Contrat")
-    multiplier = st.number_input(
-        "Multiplicateur (MAD/point)",
-        min_value=1, max_value=1000, value=CONTRACT_MULTIPLIER, step=1,
-        help="Taille du contrat MASI20 : 10 MAD par point d'indice"
-    )
+    multiplier = st.number_input("Multiplicateur (MAD/point)", 1, 1000, CONTRACT_MULTIPLIER, 1)
 
     st.markdown("---")
-    st.markdown('<div class="footer">Formule : F₀ = S₀ · e^((r−q)·T)<br>Hull (2022) — Modèle d\'absence d\'arbitrage</div>', unsafe_allow_html=True)
+    st.markdown('<div class="footer">F0 = S0 x e^((r-q)xT)<br>Hull (2022) — Absence d\'arbitrage</div>', unsafe_allow_html=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# ── MAIN PAGE ─────────────────────────────────────────────────────────────
+# MAIN
 # ══════════════════════════════════════════════════════════════════════════
-
-# Header
-st.markdown("""
+st.markdown(f"""
 <div class="main-header">
     <h1>📈 MASI20 Futures Pricer</h1>
-    <p>Pricing théorique des contrats futures sur l'indice MASI20 — Bourse de Casablanca</p>
+    <p>Pricing theorique des contrats futures sur l'indice MASI20 — Bourse de Casablanca &nbsp;|&nbsp; Date spot : <b>{pricing_date.strftime("%d/%m/%Y")}</b></p>
 </div>
 """, unsafe_allow_html=True)
 
-# Vérification ZC
 if zc_df is None:
-    st.markdown("""
-    <div class="warn-banner">
-    ⚠️ <b>Aucun fichier ZC importé.</b> Veuillez charger votre fichier <code>ZC_Rate.xlsx</code> 
-    dans la barre latérale pour activer le pricing. Le fichier doit contenir les colonnes : 
-    <code>date_spot</code> | <code>date_maturity</code> | <code>zc</code>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div class="warn-banner">⚠️ <b>Aucun fichier ZC importe.</b> Veuillez charger votre fichier <code>ZC_Rate.xlsx</code> dans la barre laterale.</div>', unsafe_allow_html=True)
     st.stop()
 
-# ── ONGLETS ────────────────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs([
+# ONGLETS
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "📊 Pricing Standard",
-    "🗓️ Échéances Trimestrielles",
-    "📉 Courbe des Taux ZC",
-    "ℹ️ Méthodologie"
+    "🗓️ Echeances Trimestrielles",
+    "📉 Graphe MASI20",
+    "📈 Courbe ZC",
+    "ℹ️ Methodologie",
 ])
 
 
@@ -246,178 +191,135 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # TAB 1 — PRICING STANDARD
 # ════════════════════════════════════════════════════════
 with tab1:
-
-    # Formule
     st.markdown('<div class="section-title">Formule d\'Absence d\'Arbitrage</div>', unsafe_allow_html=True)
-    st.markdown("""
-    <div class="formula-box">
-    F₀ = S₀ × exp( (r − q) × T )
-    <br><br>
-    S₀ : Niveau spot de l'indice &nbsp;|&nbsp; r : Taux sans risque (ZC interpolé) &nbsp;|&nbsp; q : Rendement dividende &nbsp;|&nbsp; T : Maturité (années)
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div class="formula-box">F0 = S0 x exp( (r - q) x T )<br><br>S0 : Spot indice &nbsp;|&nbsp; r : Taux ZC interpole &nbsp;|&nbsp; q : Rendement dividende &nbsp;|&nbsp; T : Maturite (annees)</div>', unsafe_allow_html=True)
 
-    # Construire la map q selon le mode
-    if q_mode == "Par maturité (avancé)":
-        maturities_with_q = q_map
-    else:
-        maturities_with_q = {k: q for k in STANDARD_MATURITIES}
-
-    # Pricing
+    # Calcul
     rows = []
     for label, T in STANDARD_MATURITIES.items():
-        q_used = maturities_with_q.get(label, q)
+        q_used = q_map.get(label, q)
         r = interpolate_rate(zc_df, T)
         F0 = price_future(S0, r, q_used, T)
         notional = notional_value(F0, multiplier)
         base = S0 - F0
-        carry = (r - q_used) * T * 100
-
         rows.append({
-            "Maturité": label,
-            "T (ans)": T,
-            "r (%)": round(r * 100, 4),
-            "q (%)": round(q_used * 100, 2),
-            "r − q (%)": round((r - q_used) * 100, 4),
-            "F₀ (points)": round(F0, 2),
-            "Notionnel (MAD)": round(notional, 2),
-            "Base (S₀ − F₀)": round(base, 2),
-            "Carry (%)": round(carry, 4),
+            "Maturite":   label,
+            "T_ans":      T,
+            "r_pct":      round(r * 100, 4),
+            "q_pct":      round(q_used * 100, 2),
+            "rq_pct":     round((r - q_used) * 100, 4),
+            "F0":         round(F0, 2),
+            "Notionnel":  round(notional, 2),
+            "Base":       round(base, 2),
+            "Carry_pct":  round((r - q_used) * T * 100, 4),
         })
 
-    df_pricing = pd.DataFrame(rows)
-
-    # ── Metrics clés ──────────────────────────────────────────────────────
-    st.markdown('<div class="section-title">Résultats du Pricing</div>', unsafe_allow_html=True)
-
+    # Metrics
+    st.markdown('<div class="section-title">Resultats</div>', unsafe_allow_html=True)
     cols = st.columns(4)
     for i, row in enumerate(rows):
         with cols[i]:
-            delta_pct = ((row["F₀ (points)"] / S0) - 1) * 100
-            delta_str = f"{'▲' if delta_pct >= 0 else '▼'} {abs(delta_pct):.2f}% vs Spot"
+            delta_pct = ((row["F0"] / S0) - 1) * 100
+            direction = "▲" if delta_pct >= 0 else "▼"
             st.markdown(f"""
             <div class="metric-card">
-                <div class="label">{row['Maturité']}</div>
-                <div class="value">{row['F₀ (points)']:,.2f}</div>
-                <div class="sub">{delta_str}</div>
-                <div class="sub">Notionnel : {row['Notionnel (MAD)']:,.0f} MAD</div>
+                <div class="label">{row['Maturite']}</div>
+                <div class="value">{row['F0']:,.2f}</div>
+                <div class="sub">{direction} {abs(delta_pct):.2f}% vs Spot</div>
+                <div class="sub">Notionnel : {row['Notionnel']:,.0f} MAD</div>
             </div>
             """, unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Tableau détaillé ──────────────────────────────────────────────────
-    st.markdown('<div class="section-title">Tableau Détaillé</div>', unsafe_allow_html=True)
+    # Tableau — noms de colonnes 100% ASCII
+    df_table = pd.DataFrame([{
+        "Maturite":         r["Maturite"],
+        "T (annees)":       r["T_ans"],
+        "r (%)":            r["r_pct"],
+        "q (%)":            r["q_pct"],
+        "r-q (%)":          r["rq_pct"],
+        "F0 (points)":      r["F0"],
+        "Notionnel (MAD)":  f"{r['Notionnel']:,.2f}",
+        "Base (S0-F0)":     f"{r['Base']:+,.2f}",
+        "Carry (%)":        r["Carry_pct"],
+    } for r in rows])
 
-    df_display = df_pricing.copy()
-    df_display["Notionnel (MAD)"] = df_display["Notionnel (MAD)"].apply(lambda x: f"{x:,.2f}")
-    df_display["F₀ (points)"] = df_display["F₀ (points)"].apply(lambda x: f"{x:,.2f}")
-    df_display["Base (S₀ − F₀)"] = df_display["Base (S₀ − F₀)"].apply(lambda x: f"{x:+,.2f}")
+    st.markdown('<div class="section-title">Tableau Detaille</div>', unsafe_allow_html=True)
+    st.dataframe(df_table, use_container_width=True, hide_index=True)
 
-    st.dataframe(df_display, use_container_width=True, hide_index=True)
-
-    # ── Graphique : Structure par terme ───────────────────────────────────
+    # Graphe structure par terme
     st.markdown('<div class="section-title">Structure par Terme des Futures</div>', unsafe_allow_html=True)
-
-    T_range = np.linspace(0.05, 1.2, 200)
-    q_plot = q if q_mode == "Valeur fixe" else sum(maturities_with_q.values()) / len(maturities_with_q)
-
-    F_curve = []
-    for T in T_range:
-        r_t = interpolate_rate(zc_df, T)
-        F_curve.append(price_future(S0, r_t, q_plot, T))
+    T_range = np.linspace(0.05, 1.2, 300)
+    q_avg = sum(q_map.values()) / len(q_map)
+    F_curve = [price_future(S0, interpolate_rate(zc_df, T), q_avg, T) for T in T_range]
 
     fig = go.Figure()
-
-    # Courbe continue
     fig.add_trace(go.Scatter(
         x=T_range * 12, y=F_curve,
-        mode="lines", name="Prix Future F₀(T)",
+        mode="lines", name="Courbe F0(T)",
         line=dict(color="#2E7D4F", width=2.5),
-        hovertemplate="T = %{x:.1f} mois<br>F₀ = %{y:,.2f} pts<extra></extra>"
+        hovertemplate="T = %{x:.1f} mois<br>F0 = %{y:,.2f} pts<extra></extra>"
     ))
-
-    # Points discrets
     fig.add_trace(go.Scatter(
-        x=[r["T (ans)"] * 12 for r in rows],
-        y=[r["F₀ (points)"] for r in rows],
+        x=[r["T_ans"] * 12 for r in rows],
+        y=[r["F0"] for r in rows],
         mode="markers+text",
         marker=dict(size=12, color="#1B4F2D", symbol="diamond"),
-        text=[r["Maturité"] for r in rows],
-        textposition="top center",
-        name="Échéances standard",
-        hovertemplate="<b>%{text}</b><br>F₀ = %{y:,.2f} pts<extra></extra>"
+        text=[r["Maturite"] for r in rows],
+        textposition="top center", name="Echeances standard",
+        hovertemplate="<b>%{text}</b><br>F0 = %{y:,.2f} pts<extra></extra>"
     ))
-
-    # Niveau spot
-    fig.add_hline(
-        y=S0, line_dash="dot", line_color="#ef4444",
-        annotation_text=f"Spot S₀ = {S0:,.2f}",
-        annotation_position="bottom right"
-    )
-
+    fig.add_hline(y=S0, line_dash="dot", line_color="#ef4444",
+        annotation_text=f"Spot S0 = {S0:,.2f}", annotation_position="bottom right")
     fig.update_layout(
-        xaxis_title="Maturité (mois)",
-        yaxis_title="Prix du Future (points)",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        plot_bgcolor="white",
-        paper_bgcolor="white",
-        height=420,
-        margin=dict(l=20, r=20, t=40, b=20),
+        xaxis_title="Maturite (mois)", yaxis_title="Prix Future (points)",
+        plot_bgcolor="white", paper_bgcolor="white", height=400,
+        margin=dict(l=20, r=20, t=30, b=20),
+        legend=dict(orientation="h", y=1.05, x=0),
         xaxis=dict(showgrid=True, gridcolor="#f3f4f6"),
         yaxis=dict(showgrid=True, gridcolor="#f3f4f6"),
     )
     st.plotly_chart(fig, use_container_width=True)
 
-    # ── Note pédagogique sur q ────────────────────────────────────────────
-    st.markdown('<div class="section-title">💡 Note sur le Taux de Dividende q</div>', unsafe_allow_html=True)
-    
-    col_a, col_b = st.columns(2)
-    with col_a:
+    # Note q
+    st.markdown('<div class="section-title">Note sur le Taux de Dividende q</div>', unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
         st.markdown("""
-        **Comment est calculé q ?**
-        
-        Le taux de dividende de l'indice MASI20 représente la somme pondérée des dividendes versés par les 20 composantes, rapportée à la valeur de l'indice :
-        
+        **Calcul de q :**
         $$q = \\frac{\\sum_{i=1}^{20} w_i \\cdot D_i}{S_0}$$
-        
-        où $w_i$ est le poids de la composante $i$ et $D_i$ son dividende annuel.
+        $w_i$ = poids composante $i$, $D_i$ = dividende annuel attendu.
         """)
-    with col_b:
+    with c2:
         st.markdown("""
-        **q est-il constant ?** Non. Il varie selon :
-        
-        - 📅 **La saisonnalité** : les dividendes marocains sont concentrés sur **mars–juin** (AG des sociétés)
-        - 📈 **Le niveau de l'indice** : si S₀ monte, q baisse mécaniquement
-        - 🏢 **Les décisions des sociétés** : payouts variables d'une année à l'autre
-        
-        **Valeur typique** : ~3–4% pour le MASI20 en condition normale de marché.
+        **q n'est pas constant :**
+        - Dividendes marocains concentres **mars-juin**
+        - Si S0 monte, q baisse mecaniquement
+        - Decisions de distribution variables
+
+        Valeur typique MASI20 : **3 – 4%**
         """)
 
 
 # ════════════════════════════════════════════════════════
-# TAB 2 — ÉCHÉANCES TRIMESTRIELLES
+# TAB 2 — ECHEANCES TRIMESTRIELLES
 # ════════════════════════════════════════════════════════
 with tab2:
-    st.markdown('<div class="section-title">Prochaines Échéances Trimestrielles MASI20</div>', unsafe_allow_html=True)
-    st.markdown("""
-    <div class="info-banner">
-    Les contrats MASI20 expirent le <b>dernier vendredi de Mars, Juin, Septembre et Décembre</b> (échéances trimestrielles standardisées).
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Prochaines Echeances Trimestrielles</div>', unsafe_allow_html=True)
+    st.markdown('<div class="info-banner">Contrats MASI20 : expiration le <b>dernier vendredi de Mars, Juin, Septembre, Decembre</b>.</div>', unsafe_allow_html=True)
 
     df_quarterly = price_quarterly_expirations(S0, q, zc_df, pricing_date)
 
     if not df_quarterly.empty:
-        # Metrics
         cols_q = st.columns(len(df_quarterly))
-        for i, row in df_quarterly.iterrows():
+        for i, (_, row) in enumerate(df_quarterly.iterrows()):
             with cols_q[i]:
-                delta = ((row["F₀ (points)"] / S0) - 1) * 100
+                delta = ((row["F0"] / S0) - 1) * 100
                 st.markdown(f"""
                 <div class="metric-card">
-                    <div class="label">{row['Échéance']}</div>
-                    <div class="value">{row['F₀ (points)']:,.2f}</div>
+                    <div class="label">{row['Echeance']}</div>
+                    <div class="value">{row['F0']:,.2f}</div>
                     <div class="sub">Exp. {row['Date Expiration']}</div>
                     <div class="sub">{'▲' if delta >= 0 else '▼'} {abs(delta):.2f}% vs Spot</div>
                 </div>
@@ -425,182 +327,251 @@ with tab2:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Tableau
-        df_q_display = df_quarterly.copy()
-        df_q_display["Notionnel (MAD)"] = df_q_display["Notionnel (MAD)"].apply(lambda x: f"{x:,.2f}")
-        df_q_display["F₀ (points)"] = df_q_display["F₀ (points)"].apply(lambda x: f"{x:,.2f}")
-        df_q_display["Base (S₀ − F₀)"] = df_q_display["Base (S₀ − F₀)"].apply(lambda x: f"{x:+,.2f}")
-        st.dataframe(df_q_display, use_container_width=True, hide_index=True)
+        # Tableau ASCII strict
+        df_q_disp = pd.DataFrame([{
+            "Echeance":        r["Echeance"],
+            "Date Expiration": r["Date Expiration"],
+            "T (annees)":      r["T (annees)"],
+            "r (%)":           r["r (%)"],
+            "F0 (points)":     f"{r['F0']:,.2f}",
+            "Notionnel (MAD)": f"{r['Notionnel']:,.2f}",
+            "Base (S0-F0)":    f"{r['Base']:+,.2f}",
+        } for _, r in df_quarterly.iterrows()])
+        st.dataframe(df_q_disp, use_container_width=True, hide_index=True)
 
-        # Graphe Base
-        st.markdown('<div class="section-title">Convergence de la Base vers Zéro</div>', unsafe_allow_html=True)
-
+        # Graphe base
+        st.markdown('<div class="section-title">Convergence de la Base vers Zero</div>', unsafe_allow_html=True)
         fig2 = go.Figure()
         fig2.add_trace(go.Bar(
-            x=df_quarterly["Échéance"],
-            y=df_quarterly["Base (S₀ − F₀)"],
-            marker_color=["#2E7D4F" if v < 0 else "#ef4444" for v in df_quarterly["Base (S₀ − F₀)"]],
-            name="Base = S₀ − F₀",
+            x=df_quarterly["Echeance"],
+            y=df_quarterly["Base"],
+            marker_color=["#2E7D4F" if v > 0 else "#ef4444" for v in df_quarterly["Base"]],
             hovertemplate="<b>%{x}</b><br>Base = %{y:+,.2f} pts<extra></extra>"
         ))
         fig2.add_hline(y=0, line_dash="dash", line_color="gray")
         fig2.update_layout(
-            yaxis_title="Base (points)",
+            yaxis_title="Base S0 - F0 (points)",
             plot_bgcolor="white", paper_bgcolor="white",
-            height=320, margin=dict(l=20, r=20, t=20, b=20),
+            height=300, margin=dict(l=20, r=20, t=20, b=20),
         )
         st.plotly_chart(fig2, use_container_width=True)
-
-        st.markdown("""
-        > **Lecture** : Une base négative (F₀ > S₀) indique que le *cost of carry* (r − q) est positif, 
-        c'est-à-dire que le coût de financement dépasse le rendement en dividendes. 
-        La base converge vers zéro à l'approche de l'échéance.
-        """)
+        st.markdown("> **Base positive (F0 < S0)** : q > r → backwardation. Les dividendes attendus depassent le cout de financement.")
 
 
 # ════════════════════════════════════════════════════════
-# TAB 3 — COURBE DES TAUX ZC
+# TAB 3 — GRAPHE MASI20
 # ════════════════════════════════════════════════════════
 with tab3:
-    st.markdown('<div class="section-title">Courbe des Taux Zéro-Coupon Importée</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Historique du MASI20 — Bourse de Casablanca</div>', unsafe_allow_html=True)
 
-    if zc_df is not None:
-        col_info1, col_info2, col_info3 = st.columns(3)
-        with col_info1:
-            st.metric("Date Spot", zc_df["date_spot"].iloc[0].strftime("%d/%m/%Y") if "date_spot" in zc_df.columns else "N/A")
-        with col_info2:
-            st.metric("Points de courbe", len(zc_df))
-        with col_info3:
-            st.metric("Plage de maturité", f"{zc_df['T'].min():.2f}–{zc_df['T'].max():.1f} ans")
+    period_options = {"1 Mois": "1mo", "3 Mois": "3mo", "6 Mois": "6mo", "1 An": "1y", "2 Ans": "2y", "5 Ans": "5y"}
+    _, col_p2 = st.columns([3, 1])
+    with col_p2:
+        selected_period = st.selectbox("Periode", list(period_options.keys()), index=3)
+    period_code = period_options[selected_period]
 
-        # Courbe ZC
-        fig3 = go.Figure()
-        fig3.add_trace(go.Scatter(
-            x=zc_df["T"] * 12, y=zc_df["zc"],
-            mode="markers+lines",
-            marker=dict(size=6, color="#2E7D4F"),
-            line=dict(color="#2E7D4F", width=1.5),
-            name="Taux ZC",
-            hovertemplate="T = %{x:.1f} mois<br>ZC = %{y:.4f}%<extra></extra>"
+    @st.cache_data(ttl=3600)
+    def fetch_masi20_history(period: str):
+        tickers = ["^MASI20", "^MASI", "MASI.MA"]
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        for ticker in tickers:
+            try:
+                url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+                params = {"interval": "1d", "range": period}
+                resp = requests.get(url, headers=headers, params=params, timeout=8)
+                if resp.status_code != 200:
+                    continue
+                data = resp.json()
+                result = data["chart"]["result"][0]
+                timestamps = result["timestamp"]
+                closes = result["indicators"]["quote"][0]["close"]
+                dates = pd.to_datetime(timestamps, unit="s")
+                df_h = pd.DataFrame({"date": dates, "close": closes}).dropna()
+                if len(df_h) > 5:
+                    meta = result.get("meta", {})
+                    name = meta.get("shortName", ticker)
+                    return df_h, ticker, name, None
+            except Exception:
+                continue
+        return None, None, None, "Impossible de recuperer l'historique depuis Yahoo Finance."
+
+    df_hist, ticker_used, idx_name, err_msg = fetch_masi20_history(period_code)
+
+    if err_msg:
+        st.markdown(f'<div class="warn-banner">⚠️ {err_msg}<br>Le scraping Yahoo Finance peut etre limite depuis Streamlit Cloud. Entrez le cours manuellement dans la sidebar.</div>', unsafe_allow_html=True)
+    else:
+        last_val  = df_hist["close"].iloc[-1]
+        prev_val  = df_hist["close"].iloc[-2] if len(df_hist) > 1 else last_val
+        chg       = last_val - prev_val
+        chg_pct   = chg / prev_val * 100
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.markdown(f'<div class="metric-card"><div class="label">Dernier cours</div><div class="value">{last_val:,.2f}</div><div class="sub">{ticker_used}</div></div>', unsafe_allow_html=True)
+        with c2:
+            col_chg = "#16a34a" if chg >= 0 else "#dc2626"
+            st.markdown(f'<div class="metric-card"><div class="label">Variation J-1</div><div class="value" style="color:{col_chg}">{"▲" if chg>=0 else "▼"} {abs(chg_pct):.2f}%</div><div class="sub">{chg:+,.2f} pts</div></div>', unsafe_allow_html=True)
+        with c3:
+            hi = df_hist["close"].max()
+            st.markdown(f'<div class="metric-card"><div class="label">Plus haut ({selected_period})</div><div class="value">{hi:,.2f}</div></div>', unsafe_allow_html=True)
+        with c4:
+            lo = df_hist["close"].min()
+            st.markdown(f'<div class="metric-card"><div class="label">Plus bas ({selected_period})</div><div class="value">{lo:,.2f}</div></div>', unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        fig_h = go.Figure()
+        fig_h.add_trace(go.Scatter(
+            x=df_hist["date"], y=df_hist["close"],
+            mode="lines",
+            line=dict(color="#2E7D4F", width=2),
+            name=idx_name or ticker_used,
+            fill="tozeroy", fillcolor="rgba(46,125,79,0.08)",
+            hovertemplate="%{x|%d/%m/%Y}<br><b>%{y:,.2f} pts</b><extra></extra>"
         ))
 
-        # Marquer les maturités utilisées pour le pricing
-        for label, T in STANDARD_MATURITIES.items():
-            r_mark = interpolate_rate(zc_df, T)
-            fig3.add_trace(go.Scatter(
-                x=[T * 12], y=[r_mark * 100],
-                mode="markers", marker=dict(size=12, color="#ef4444", symbol="x"),
-                name=f"r({label}) = {r_mark*100:.4f}%",
-                hovertemplate=f"<b>{label}</b><br>r = {r_mark*100:.4f}%<extra></extra>"
+        # Ligne S0
+        fig_h.add_hline(
+            y=S0, line_dash="dot", line_color="#f59e0b",
+            annotation_text=f"S0 saisi = {S0:,.2f}",
+            annotation_position="bottom right",
+            annotation_font_color="#f59e0b"
+        )
+
+        # Ligne date spot Excel
+        try:
+            fig_h.add_vline(
+                x=str(pricing_date), line_dash="dash", line_color="#6366f1",
+                annotation_text=f"Date spot Excel ({pricing_date.strftime('%d/%m/%Y')})",
+                annotation_position="top right",
+                annotation_font_color="#6366f1"
+            )
+        except Exception:
+            pass
+
+        # MM20
+        if len(df_hist) >= 20:
+            df_hist = df_hist.copy()
+            df_hist["ma20"] = df_hist["close"].rolling(20).mean()
+            fig_h.add_trace(go.Scatter(
+                x=df_hist["date"], y=df_hist["ma20"],
+                mode="lines", line=dict(color="#f97316", width=1.4, dash="dot"),
+                name="MM 20j",
+                hovertemplate="%{x|%d/%m/%Y}<br>MM20 = %{y:,.2f}<extra></extra>"
             ))
 
-        fig3.update_layout(
-            xaxis_title="Maturité (mois)",
-            yaxis_title="Taux ZC (%)",
+        fig_h.update_layout(
+            title=dict(text=f"{idx_name or ticker_used} — {selected_period}", font=dict(size=14, color="#1B4F2D")),
+            xaxis_title="Date", yaxis_title="Niveau (points)",
             plot_bgcolor="white", paper_bgcolor="white",
-            height=420, margin=dict(l=20, r=20, t=20, b=20),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+            height=480, margin=dict(l=20, r=20, t=50, b=20),
+            legend=dict(orientation="h", y=1.08, x=0),
+            xaxis=dict(showgrid=True, gridcolor="#f3f4f6", rangeslider=dict(visible=True)),
+            yaxis=dict(showgrid=True, gridcolor="#f3f4f6"),
+            hovermode="x unified",
         )
-        st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig_h, use_container_width=True)
 
-        # Tableau des taux interpolés aux maturités standard
-        st.markdown('<div class="section-title">Taux r Interpolés aux Maturités Standard</div>', unsafe_allow_html=True)
-        interp_rows = []
-        for label, T in STANDARD_MATURITIES.items():
-            r_val = interpolate_rate(zc_df, T)
-            interp_rows.append({"Maturité": label, "T (années)": T, "r interpolé (%)": round(r_val * 100, 5)})
-        st.dataframe(pd.DataFrame(interp_rows), use_container_width=True, hide_index=True)
+        st.markdown(f'<div class="info-banner">📡 Source : Yahoo Finance — ticker <b>{ticker_used}</b>. Ligne jaune : S0 saisi. Ligne violette : date spot de la courbe ZC.</div>', unsafe_allow_html=True)
 
-        # Données brutes
-        with st.expander("📋 Données brutes ZC"):
-            st.dataframe(zc_df[["date_maturity", "T", "zc"]].rename(columns={
-                "date_maturity": "Date Maturité", "T": "T (années)", "zc": "ZC (%)"
-            }), use_container_width=True, hide_index=True)
+        with st.expander("📊 Statistiques descriptives"):
+            ret = df_hist["close"].pct_change().dropna()
+            s1, s2, s3, s4, s5 = st.columns(5)
+            s1.metric("Rendement total",   f"{(last_val/df_hist['close'].iloc[0]-1)*100:.2f}%")
+            s2.metric("Vol. annualisee",   f"{ret.std()*math.sqrt(252)*100:.2f}%")
+            s3.metric("Sharpe (approx.)",  f"{ret.mean()/ret.std()*math.sqrt(252):.2f}")
+            s4.metric("Max Drawdown",      f"{((df_hist['close']/df_hist['close'].cummax())-1).min()*100:.2f}%")
+            s5.metric("Nb seances",        len(df_hist))
 
 
 # ════════════════════════════════════════════════════════
-# TAB 4 — MÉTHODOLOGIE
+# TAB 4 — COURBE ZC
 # ════════════════════════════════════════════════════════
 with tab4:
-    st.markdown('<div class="section-title">Modèle de Pricing</div>', unsafe_allow_html=True)
+    st.markdown('<div class="section-title">Courbe des Taux Zero-Coupon</div>', unsafe_allow_html=True)
 
-    col_m1, col_m2 = st.columns(2)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        ds = zc_df["date_spot"].iloc[0].strftime("%d/%m/%Y") if "date_spot" in zc_df.columns else "N/A"
+        st.metric("Date Spot (Excel)", ds)
+    with c2:
+        st.metric("Points de courbe", len(zc_df))
+    with c3:
+        st.metric("Plage", f"{zc_df['T'].min():.2f} – {zc_df['T'].max():.1f} ans")
 
-    with col_m1:
+    fig3 = go.Figure()
+    fig3.add_trace(go.Scatter(
+        x=zc_df["T"] * 12, y=zc_df["zc"],
+        mode="markers+lines",
+        marker=dict(size=6, color="#2E7D4F"),
+        line=dict(color="#2E7D4F", width=1.5),
+        name="Taux ZC (%)",
+        hovertemplate="T = %{x:.1f} mois<br>ZC = %{y:.4f}%<extra></extra>"
+    ))
+    for label, T in STANDARD_MATURITIES.items():
+        r_m = interpolate_rate(zc_df, T)
+        fig3.add_trace(go.Scatter(
+            x=[T * 12], y=[r_m * 100],
+            mode="markers",
+            marker=dict(size=12, color="#ef4444", symbol="x"),
+            name=f"r({label})={r_m*100:.4f}%",
+            hovertemplate=f"<b>{label}</b><br>r = {r_m*100:.4f}%<extra></extra>"
+        ))
+    fig3.update_layout(
+        xaxis_title="Maturite (mois)", yaxis_title="Taux ZC (%)",
+        plot_bgcolor="white", paper_bgcolor="white", height=420,
+        margin=dict(l=20, r=20, t=20, b=20),
+        legend=dict(orientation="h", y=1.05, x=0),
+    )
+    st.plotly_chart(fig3, use_container_width=True)
+
+    rows_zc = [{"Maturite": lbl, "T (annees)": T, "r interpole (%)": round(interpolate_rate(zc_df, T)*100, 5)} for lbl, T in STANDARD_MATURITIES.items()]
+    st.dataframe(pd.DataFrame(rows_zc), use_container_width=True, hide_index=True)
+
+    with st.expander("📋 Donnees brutes ZC"):
+        st.dataframe(zc_df[["date_maturity", "T", "zc"]].rename(columns={
+            "date_maturity": "Date Maturite", "T": "T (annees)", "zc": "ZC (%)"}),
+            use_container_width=True, hide_index=True)
+
+
+# ════════════════════════════════════════════════════════
+# TAB 5 — METHODOLOGIE
+# ════════════════════════════════════════════════════════
+with tab5:
+    st.markdown('<div class="section-title">Modele de Pricing</div>', unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
         st.markdown("""
-        #### Formule d'Absence d'Arbitrage
-        
-        Dans un cadre théorique avec dividendes continus au taux moyen *q* :
-        
+        #### Formule Theorique
         $$F_0 = S_0 \\cdot e^{(r - q) \\cdot T}$$
-        
-        **Paramètres :**
+
         | Symbole | Description | Source |
         |---------|-------------|--------|
-        | S₀ | Niveau spot MASI20 | Scraping Bourse de Casablanca |
-        | r | Taux sans risque | Courbe ZC (interpolation linéaire) |
-        | q | Rendement dividende | Saisie utilisateur (~3–4%) |
-        | T | Maturité (années) | Calculée depuis la date spot |
-        
+        | S0 | Niveau spot MASI20 | Scraping / saisie |
+        | r | Taux sans risque | Courbe ZC (interpolation) |
+        | q | Rendement dividende | Saisie utilisateur |
+        | T | Maturite (annees) | Date spot Excel |
+
         #### Valeur Notionnelle
-        
-        $$\\text{Notionnel} = F_0 \\times \\text{Multiplicateur}$$
-        
-        Multiplicateur MASI20 = **10 MAD / point d'indice**
+        $$\\text{Notionnel} = F_0 \\times 10 \\text{ MAD/point}$$
         """)
-
-    with col_m2:
+    with c2:
         st.markdown("""
-        #### Spécifications du Contrat MASI20
-        
-        | Caractéristique | Valeur |
+        #### Specifications MASI20
+
+        | Caracteristique | Valeur |
         |-----------------|--------|
-        | Sous-jacent | MASI20 |
         | Multiplicateur | 10 MAD/point |
-        | Pas de cotation | 0.1 point (= 1 MAD) |
-        | Échéances | Mars, Juin, Sep, Déc |
-        | Dernier jour | Dernier vendredi du mois |
-        | Dénouement | Cash settlement |
-        | Dépôt de garantie | 1 000 MAD (révisable) |
-        
-        #### Limites du Modèle V1
-        
-        - q supposé constant sur la période (simplification)
-        - Pas de prise en compte du *marking to market* quotidien
-        - La courbe ZC est supposée être celle du jour de pricing
-        - La maturité est alignée sur les dates standard et non les échéances exactes
-        """)
+        | Pas de cotation | 0.1 pt = 1 MAD |
+        | Echeances | Mar, Juin, Sep, Dec |
+        | Expiration | Dernier vendredi |
+        | Denouement | Cash |
+        | Depot de garantie | 1 000 MAD |
 
-    st.markdown('<div class="section-title">Roadmap des Fonctionnalités</div>', unsafe_allow_html=True)
-
-    col_v1, col_v2 = st.columns(2)
-    with col_v1:
-        st.markdown("""
-        #### ✅ Version 1 (actuelle)
-        - Pricing F₀ = S₀·e^((r−q)·T)
-        - Interpolation de r depuis courbe ZC importée
-        - Scraping automatique du MASI20
-        - Maturités standard (3M, 6M, 9M, 1Y)
-        - Échéances trimestrielles réelles
-        - Visualisation de la structure par terme
-        - Gestion intelligente de q
+        #### Roadmap V2
+        - Couverture N* = beta x P/A
+        - Calcul beta par regression
+        - Simulation P&L couverture
+        - Export PDF rapport
         """)
-    with col_v2:
-        st.markdown("""
-        #### 🚧 Version 2 (planifiée)
-        - **Couverture par contrats futures** (N* = β × P/A)
-        - Calcul automatique du **bêta** par régression
-        - Upload historique de portefeuille
-        - Simulation P&L de couverture
-        - Export PDF du rapport de pricing
-        - Alertes d'arbitrage (F₀ vs valeur théorique)
-        """)
-
-    st.markdown("""
-    ---
-    <div class="footer">
-    MASI20 Futures Pricer — CDG Capital | 
-    Basé sur : <i>Options, Futures and Other Derivatives</i>, J.C. Hull (2022) | 
-    Marché à Terme — Bourse de Casablanca
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown('<div class="footer">MASI20 Futures Pricer — CDG Capital | Hull (2022) — Options, Futures and Other Derivatives</div>', unsafe_allow_html=True)
